@@ -75,6 +75,40 @@
 
 <body>
     <div id="game-container"></div>
+
+    <!-- Top Stage Indicator -->
+    <div id="top-ui">
+        <div class="stage-container">
+            <div class="stage-box active" data-stage="1">1</div>
+            <div class="stage-box" data-stage="2">2</div>
+            <div class="stage-box" data-stage="3">3</div>
+            <div class="stage-box" data-stage="4">4</div>
+            <div class="stage-box" data-stage="5">5</div>
+        </div>
+    </div>
+
+    <!-- Bottom Letter Collection (Hidden by default) -->
+    <div id="bottom-ui" class="hidden">
+        <div class="collection-container">
+            <div class="letter-slot">
+                <div class="count">0</div>
+                <div class="circle"></div>
+            </div>
+            <div class="letter-slot">
+                <div class="count">0</div>
+                <div class="circle"></div>
+            </div>
+            <div class="letter-slot">
+                <div class="count">0</div>
+                <div class="circle"></div>
+            </div>
+            <div class="letter-slot">
+                <div class="count">0</div>
+                <div class="circle"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="ui-layer">
         <h1>PIPE SYSTEM : RE-START</h1>
         <div class="status">
@@ -82,6 +116,155 @@
             CORE PRESSURE: OPTIMAL
         </div>
     </div>
+
+    <style>
+        /* UI Common Styles */
+        #top-ui {
+            position: absolute;
+            top: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        .stage-container {
+            display: flex;
+            gap: 12px;
+            pointer-events: auto;
+        }
+
+        .stage-box {
+            width: 45px;
+            height: 45px;
+            background: #222;
+            /* Dark Iron */
+            color: #666;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 18px;
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 900;
+            border: 2px solid #444;
+            box-shadow: inset 2px 2px 5px rgba(0, 0, 0, 0.5), 1px 1px 2px rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            border-radius: 4px;
+        }
+
+        /* Rivet details for industrial feel */
+        .stage-box::before,
+        .stage-box::after {
+            content: '';
+            position: absolute;
+            width: 3px;
+            height: 3px;
+            background: #555;
+            border-radius: 50%;
+        }
+
+        .stage-box::before {
+            top: 3px;
+            left: 3px;
+        }
+
+        .stage-box::after {
+            bottom: 3px;
+            right: 3px;
+        }
+
+        .stage-box.active {
+            background: #333;
+            color: #cc7722;
+            border-color: #cc7722;
+            box-shadow: 0 0 15px rgba(204, 119, 34, 0.4), inset 0 0 10px rgba(204, 119, 34, 0.2);
+            text-shadow: 0 0 5px rgba(204, 119, 34, 0.8);
+            transform: scale(1.05);
+        }
+
+        .stage-box.done {
+            background: #1a1a1a;
+            color: #2a2;
+            border-color: #2a2;
+            box-shadow: inset 0 0 10px rgba(34, 170, 34, 0.2);
+        }
+
+        #bottom-ui {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 100;
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+
+        #bottom-ui.hidden {
+            opacity: 0;
+            transform: translate(-50%, 20px);
+            pointer-events: none;
+        }
+
+        .collection-container {
+            display: flex;
+            gap: 15px;
+            background: #111;
+            padding: 12px 20px;
+            border: 2px solid #333;
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), inset 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .letter-slot {
+            position: relative;
+            width: 50px;
+            height: 50px;
+            background: #050505;
+            border: 1px solid #222;
+            border-radius: 4px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .letter-slot .circle {
+            width: 35px;
+            height: 35px;
+            border: 1px dashed #333;
+            border-radius: 2px;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .letter-slot .count {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #cc7722;
+            color: white;
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-weight: bold;
+            opacity: 0;
+            z-index: 10;
+        }
+
+        /* The Paper Item inside the metal slot */
+        .letter-slot.acquired .circle {
+            background: #e6e2d3;
+            border: none;
+            box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.3);
+            transform: rotate(-5deg) scale(1.1);
+            /* Torn paper edge effect */
+            clip-path: polygon(0% 2%, 100% 0%, 98% 95%, 80% 100%, 20% 98%, 0% 100%);
+        }
+
+        .letter-slot.acquired .count {
+            opacity: 1;
+        }
+    </style>
 
     <script>
         const CONFIG = {
