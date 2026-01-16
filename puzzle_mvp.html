@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heavy Industrial Pipe Puzzle</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0a0a0a;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #ddd;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            cursor: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3e%3cpath fill='%23aaa' stroke='%23333' stroke-width='1.5' d='M23.1,3.9c-2.4-2.4-6.2-2.4-8.6,0c-1.8,1.8-2.2,4.6-1.1,6.8L3.1,21c-1.4,1.4-1.4,3.7,0,5.1l2.8,2.8c1.4,1.4,3.7,1.4,5.1,0l10.3-10.3c2.2,1.1,5,0.7,6.8-1.1C30.6,15,30.6,11.3,28.2,8.9L23.1,3.9z M25.6,12.7c-0.8,0.8-2,0.8-2.8,0c-0.8-0.8-0.8-2,0-2.8c0.8-0.8,2-0.8,2.8,0C26.3,10.7,26.3,12,25.6,12.7z'/%3e%3c/svg%3e") 24 8, auto;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background:
+                radial-gradient(circle at center, #1a1a1a 0%, #050505 100%),
+                repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.02) 0px, rgba(255, 255, 255, 0.02) 2px, transparent 2px, transparent 4px);
+            cursor: inherit;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            padding: 15px;
+            background: rgba(20, 20, 20, 0.8);
+            border-left: 4px solid #cc7722;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #cc7722;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            font-weight: 900;
+        }
+
+        .status {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #2a2;
+            border-radius: 50%;
+            box-shadow: 0 0 5px #2a2;
+        }
+    </style>
+    <!-- PixiJS v7 -->
+    <script src="./pixi.min.js"></script>
+    <!-- GSAP v3 -->
+    <script src="./gsap.min.js"></script>
+</head>
+
+<body>
+    <div id="game-container"></div>
+    <div id="ui-layer">
+        <h1>PIPE SYSTEM : RE-START</h1>
+        <div class="status">
+            <div class="status-dot"></div>
+            CORE PRESSURE: OPTIMAL
+        </div>
+    </div>
+
+    <script>
+        const CONFIG = {
+            GRID_SIZE: 11,
+            TILE_SIZE: 80,
+            PIPE_WIDTH: 24,
+            COLORS: {
+                IRON: 0x3a3a3a,
+                RUST: 0x8b4513,
+                STEEL: 0x666666,
+                GLOW_CYAN: 0x00ffff,
+                GLOW_MAGENTA: 0xff00ff,
+                GLOW_WHITE: 0xffffff,
+                BG: 0x0a0a0a,
+                VALVE: 0xcc7722
+            },
+            ANIMATION_DURATION: 0.5
+        };
+
+        class Pipe extends PIXI.Container {
+            constructor(x, y, type = [0, 0, 0, 0], isFixed = false) {
+                super();
+                this.gridX = x;
+                this.gridY = y;
+                this.isFixed = isFixed;
+                this.arms = [...type];
+                this.isEnergized = false;
+                this.activeColors = [];
+                this.isInteracting = false;
+
+                this.visuals = new PIXI.Container();
+                this.addChild(this.visuals);
+
+                this.x = x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+                this.y = y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+
+                this.draw();
+                this.eventMode = 'static';
+                // Explicit hit area for reliable clicking
+                this.hitArea = new PIXI.Rectangle(-CONFIG.TILE_SIZE / 2, -CONFIG.TILE_SIZE / 2, CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+                this.cursor = this.isFixed ? 'default' : 'wrench';
+                this.on('pointerdown', this.onClick.bind(this));
+            }
+
+            draw() {
+                this.visuals.removeChildren();
+                const container = new PIXI.Container();
+                this.visuals.addChild(container);
+
+                const baseG = new PIXI.Graphics();
+                const glowG = new PIXI.Graphics();
+                const detailG = new PIXI.Graphics();
+
+                // Add soft blur to glow for premium "Bloom" effect
+                const bloom = new PIXI.filters.BlurFilter();
+                bloom.blur = 8;
+                glowG.filters = [bloom];
+
+                container.addChild(glowG, baseG, detailG);
+
+                const armLen = CONFIG.TILE_SIZE / 2;
+                const halfPipe = CONFIG.PIPE_WIDTH / 2;
+
+                let energyColor = null;
+                if (this.isEnergized) {
+                    energyColor = this.activeColors.length > 1 ? CONFIG.COLORS.GLOW_WHITE : this.activeColors[0];
+                }
+
+                const directions = [
+                    { x: 0, y: -armLen },
+                    { x: armLen, y: 0 },
+                    { x: 0, y: armLen },
+                    { x: -armLen, y: 0 }
+                ];
+
+                directions.forEach((dir, i) => {
+                    if (this.arms[i]) {
+                        // 1. Soft Bloom (Under)
+                        if (energyColor) {
+                            // Match pipe width for the source, blur creates the spread
+                            glowG.lineStyle(CONFIG.PIPE_WIDTH, energyColor, 0.6);
+                            glowG.moveTo(0, 0);
+                            glowG.lineTo(dir.x, dir.y);
+                        }
+
+                        // 2. Base Pipe (Iron)
+                        baseG.lineStyle(CONFIG.PIPE_WIDTH, CONFIG.COLORS.IRON);
+                        baseG.moveTo(0, 0);
+                        baseG.lineTo(dir.x, dir.y);
+
+                        // 3. Texture / Highlight
+                        baseG.lineStyle(halfPipe, 0x000000, 0.2); // Mid shadow
+                        baseG.moveTo(0, 0);
+                        baseG.lineTo(dir.x, dir.y);
+
+                        baseG.lineStyle(4, 0xffffff, 0.1); // High edge
+                        const offset = 6;
+                        if (i % 2 === 0) { // Vertical
+                            baseG.moveTo(-offset, 0); baseG.lineTo(-offset, dir.y);
+                        } else { // Horizontal
+                            baseG.moveTo(0, -offset); baseG.lineTo(dir.x, -offset);
+                        }
+
+                        // 4. Energy Core (Sharper internal line)
+                        if (energyColor) {
+                            baseG.lineStyle(4, energyColor, 1); // Narrower, sharper core
+                            baseG.moveTo(0, 0);
+                            baseG.lineTo(dir.x, dir.y);
+
+                            // Inner core highlight
+                            glowG.lineStyle(1.5, 0xffffff, 0.8);
+                            glowG.moveTo(0, 0);
+                            glowG.lineTo(dir.x, dir.y);
+                        }
+
+                        // 5. Connectors (Flanges)
+                        detailG.lineStyle(2, 0x111111);
+                        detailG.beginFill(CONFIG.COLORS.IRON);
+                        const fw = CONFIG.PIPE_WIDTH + 10;
+                        const fh = 8;
+                        if (i % 2 === 0) { // Vertical
+                            const fy = i === 0 ? -armLen : armLen - fh;
+                            detailG.drawRoundedRect(-fw / 2, fy, fw, fh, 2);
+                        } else { // Horizontal
+                            const fx = i === 3 ? -armLen : armLen - fh;
+                            detailG.drawRoundedRect(fx, -fw / 2, fh, fw, 2);
+                        }
+                        detailG.endFill();
+                    }
+                });
+
+                // Center Node
+                if (this.arms.some(a => a === 1)) {
+                    // Hub
+                    detailG.lineStyle(2, 0x000000);
+                    detailG.beginFill(CONFIG.COLORS.IRON);
+                    const hubSize = CONFIG.PIPE_WIDTH + 6;
+                    detailG.drawCircle(0, 0, hubSize / 2);
+                    detailG.endFill();
+
+                    // Valve/Detail
+                    if (!this.isFixed) {
+                        detailG.lineStyle(3, 0x000000);
+                        detailG.beginFill(CONFIG.COLORS.VALVE);
+                        detailG.drawCircle(0, 0, 10);
+                        detailG.endFill();
+                        detailG.lineStyle(1, 0x000000);
+                        detailG.moveTo(0, -6); detailG.lineTo(0, 6);
+                        detailG.moveTo(-6, 0); detailG.lineTo(6, 0);
+                    }
+                }
+            }
+
+            rotate90() {
+                if (this.isInteracting || this.isFixed) return;
+                this.isInteracting = true;
+                const last = this.arms.pop();
+                this.arms.unshift(last);
+                const targetRotation = this.visuals.rotation + (Math.PI / 2);
+
+                gsap.to(this.visuals, {
+                    rotation: targetRotation,
+                    duration: CONFIG.ANIMATION_DURATION,
+                    ease: "back.out(1.2)",
+                    onComplete: () => {
+                        this.isInteracting = false;
+                        if (this.parent && this.parent.emit) this.parent.emit('pipeRotated');
+                    }
+                });
+            }
+
+            onClick() {
+                if (window.G_VIEWPORT && window.G_VIEWPORT.isPanning) return;
+                this.rotate90();
+            }
+
+            setEnergized(state, colors = []) {
+                const colorArr = Array.isArray(colors) ? colors : (colors ? [colors] : []);
+                const isSameColors = this.activeColors.length === colorArr.length && this.activeColors.every((v, i) => v === colorArr[i]);
+                if (this.isEnergized === state && isSameColors) return;
+                this.isEnergized = state;
+                this.activeColors = colorArr;
+                this.draw();
+            }
+        }
+
+        class Grid extends PIXI.Container {
+            constructor(appWidth, appHeight) {
+                super();
+                this.pipes = [];
+                this.cols = CONFIG.GRID_SIZE;
+                this.rows = CONFIG.GRID_SIZE;
+                this.markers = {};
+
+                this.pivot.set((this.cols * CONFIG.TILE_SIZE) / 2, (this.rows * CONFIG.TILE_SIZE) / 2);
+                this.x = appWidth / 2;
+                this.y = appHeight / 2;
+
+                this.startPoint = { x: Math.floor(this.cols / 2), y: 0 };
+                this.endPoints = [
+                    { x: this.cols - 1, y: this.rows - 1, color: CONFIG.COLORS.GLOW_CYAN, id: 1, secret: 'R' },
+                    { x: 0, y: this.rows - 1, color: CONFIG.COLORS.GLOW_MAGENTA, id: 2, secret: 'E' }
+                ];
+
+                this.initGrid();
+                this.on('pipeRotated', () => this.checkPath());
+            }
+
+            initGrid() {
+                const firstStep = { x: this.startPoint.x, y: 1 };
+                const path1 = this.generateRandomPath(firstStep, this.endPoints[0]);
+                const path2 = this.generateRandomPath(firstStep, this.endPoints[1]);
+                const pathSet = new Set();
+                pathSet.add(`${this.startPoint.x},${this.startPoint.y}`);
+                [...path1, ...path2].forEach(p => pathSet.add(`${p.x},${p.y}`));
+
+                for (let y = 0; y < this.rows; y++) {
+                    this.pipes[y] = [];
+                    for (let x = 0; x < this.cols; x++) {
+                        let arms = [0, 0, 0, 0];
+                        let isFixed = false;
+                        const isStart = (x === this.startPoint.x && y === this.startPoint.y);
+                        const isEnd = this.endPoints.some(ep => ep.x === x && ep.y === y);
+
+                        if (isStart) { arms = [0, 0, 1, 0]; isFixed = true; }
+                        else if (y === 0) { arms = [0, 0, 0, 0]; isFixed = true; }
+                        else if (isEnd) { arms = this.getPathArms(x, y, pathSet); isFixed = true; }
+                        else if (pathSet.has(`${x},${y}`)) { arms = this.getPathArms(x, y, pathSet); }
+                        else {
+                            if (Math.random() < 0.5) arms = [0, 0, 0, 0];
+                            else arms = this.getRandomArms();
+                        }
+
+                        const pipe = new Pipe(x, y, arms, isFixed);
+                        this.addChild(pipe); // Pipes added first
+                        this.pipes[y][x] = pipe;
+
+                        if (!isFixed && arms.some(a => a === 1)) {
+                            const rolls = Math.floor(Math.random() * 4);
+                            for (let r = 0; r < rolls; r++) {
+                                const last = pipe.arms.pop();
+                                pipe.arms.unshift(last);
+                                pipe.visuals.rotation += Math.PI / 2;
+                            }
+                        }
+                    }
+                }
+
+                // Markers added AFTER pipes.
+                // We want them VISUALLY ON TOP, so we add the layer properly.
+                // Since they have eventMode='none' (set in addMarker), they won't block clicks.
+                const markerLayer = new PIXI.Container();
+                this.addChild(markerLayer); // Add to end (Top Z-Index)
+
+                this.addMarker(this.startPoint.x, this.startPoint.y, 0xFFFF00, "⚡ CORE", 'start', markerLayer);
+                this.endPoints.forEach(ep => this.addMarker(ep.x, ep.y, 0x444444, `EXT ${ep.id}`, `bulb_${ep.id}`, markerLayer, ep.secret));
+                this.checkPath();
+            }
+
+            getPathArms(x, y, pathSet) {
+                let arms = [0, 0, 0, 0];
+                const ns = [{ dx: 0, dy: -1, a: 0 }, { dx: 1, dy: 0, a: 1 }, { dx: 0, dy: 1, a: 2 }, { dx: -1, dy: 0, a: 3 }];
+                ns.forEach(n => {
+                    const nx = x + n.dx, ny = y + n.dy;
+                    if (ny === 0 && nx !== this.startPoint.x) return;
+                    if (pathSet.has(`${nx},${ny}`)) arms[n.a] = 1;
+                });
+                return arms;
+            }
+
+            getRandomArms() {
+                const types = [[1, 0, 1, 0], [1, 1, 0, 0], [1, 1, 1, 0], [1, 1, 1, 1]];
+                return types[Math.floor(Math.random() * types.length)];
+            }
+
+            generateRandomPath(start, end) {
+                let curr = { ...start }, path = [curr], safety = 0;
+                while ((curr.x !== end.x || curr.y !== end.y) && safety++ < 500) {
+                    let moves = [];
+                    if (curr.x < end.x) moves.push({ x: curr.x + 1, y: curr.y });
+                    if (curr.x > end.x) moves.push({ x: curr.x - 1, y: curr.y });
+                    if (curr.y < end.y) moves.push({ x: curr.x, y: curr.y + 1 });
+                    if (curr.y > end.y) moves.push({ x: curr.x, y: curr.y - 1 });
+                    moves = moves.filter(m => m.x >= 0 && m.x < this.cols && m.y > 0 && m.y < this.rows);
+                    if (!moves.length) break;
+                    const next = moves[Math.floor(Math.random() * moves.length)];
+                    if (!path.find(p => p.x === next.x && p.y === next.y)) { path.push(next); curr = next; }
+                }
+                return path;
+            }
+
+            addMarker(x, y, color, label, id, layer, secret = '') {
+                const container = new PIXI.Container();
+
+                if (id === 'start') {
+                    // --- INDUSTRIAL TRANSFORMER DESIGN ---
+                    const w = 160;
+                    const h = 100;
+                    const shiftY = -25; // Shift body UP to avoid overlap
+
+                    const gfx = new PIXI.Graphics();
+                    container.addChild(gfx);
+
+                    // 0. Connection Flange (The "Neck" connecting to pipe)
+                    // Drawn BEFORE shadow/body so it looks behind/attached
+                    const pipeW = 24; // Standard pipe width from config
+                    const flangeW = 34;
+                    const connectorH = 40; // Length to reach center/pipe
+
+                    // Vertical pipe segment extending down from the shifted body
+                    gfx.beginFill(0x222222); // Dark iron
+                    gfx.drawRect(-10, shiftY + h / 2 - 5, 20, 35); // Stem
+                    gfx.endFill();
+
+                    // Flange connector at the bottom (near tile center)
+                    gfx.lineStyle(2, 0x000000);
+                    gfx.beginFill(0x333333);
+                    gfx.drawRoundedRect(-flangeW / 2, 10, flangeW, 12, 3); // Positioned to cover pipe start
+                    gfx.endFill();
+
+                    // Bolts on flange
+                    gfx.lineStyle(0);
+                    gfx.beginFill(0x777777);
+                    gfx.drawCircle(-flangeW / 2 + 5, 16, 2);
+                    gfx.drawCircle(flangeW / 2 - 5, 16, 2);
+                    gfx.endFill();
+
+
+                    // 1. Shadow (Drop shadow) - Shifted
+                    gfx.beginFill(0x000000, 0.5);
+                    gfx.drawRoundedRect(-w / 2 + 10, -h / 2 + 10 + shiftY, w, h, 6);
+                    gfx.endFill();
+
+                    // 2. Cooling Fins (Darker background layer) - Shifted
+                    const finCount = 8;
+                    const finW = 12;
+                    const finGap = 6;
+                    const finsTotalW = (finW * finCount) + (finGap * (finCount - 1));
+                    const startX = -finsTotalW / 2;
+
+                    gfx.beginFill(0x333333);
+                    gfx.drawRect(startX - 5, -h / 2 + 10 + shiftY, finsTotalW + 10, h - 20);
+                    gfx.endFill();
+
+                    // Draw individual fins
+                    gfx.beginFill(0x222222);
+                    for (let i = 0; i < finCount; i++) {
+                        gfx.drawRect(startX + i * (finW + finGap), -h / 2 + 10 + shiftY, finW, h - 20);
+                    }
+                    gfx.endFill();
+
+                    // 3. Main Tank Body (shifted)
+                    gfx.lineStyle(0); // Clear lines
+
+                    // Drop Shadow for box
+                    gfx.beginFill(0x000000, 0.6);
+                    gfx.drawRoundedRect(-w / 2 + 8, -h / 2 + 8 + shiftY, w, h, 8);
+                    gfx.endFill();
+
+                    // Main Box Color (Industrial Yellow)
+                    const yellowColor = 0xF5B041;
+                    const darkYellow = 0xD4AC0D;
+
+                    // Base Block
+                    gfx.beginFill(darkYellow);
+                    gfx.drawRoundedRect(-w / 2, -h / 2 + shiftY, w, h, 6);
+                    gfx.endFill();
+
+                    // Front Face
+                    gfx.beginFill(yellowColor);
+                    gfx.drawRoundedRect(-w / 2 + 4, -h / 2 + 4 + shiftY, w - 8, h - 8, 4);
+                    gfx.endFill();
+
+                    // 4. Side Cooling Grills (Visual detail)
+                    gfx.beginFill(0x000000, 0.2);
+                    // Left grill
+                    for (let i = 0; i < 5; i++) {
+                        gfx.drawRect(-w / 2 + 10, -h / 2 + 20 + (i * 12) + shiftY, 15, 6);
+                    }
+                    // Right grill
+                    for (let i = 0; i < 5; i++) {
+                        gfx.drawRect(w / 2 - 25, -h / 2 + 20 + (i * 12) + shiftY, 15, 6);
+                    }
+                    gfx.endFill();
+
+                    // 5. High Voltage Warning Plate (Center - Shifted)
+                    const plateY = shiftY;
+                    gfx.beginFill(0xFFFFFF, 0.9);
+                    gfx.drawRect(-30, -20 + plateY, 60, 40);
+                    gfx.endFill();
+
+                    // Warning Symbol (Triangle)
+                    gfx.beginFill(0x000000);
+                    gfx.moveTo(0, -15 + plateY);
+                    gfx.lineTo(12, 5 + plateY);
+                    gfx.lineTo(-12, 5 + plateY);
+                    gfx.lineTo(0, -15 + plateY);
+                    gfx.endFill();
+
+                    // Warning Text lines
+                    gfx.beginFill(0x000000);
+                    gfx.drawRect(-25, 10 + plateY, 50, 2);
+                    gfx.drawRect(-25, 15 + plateY, 35, 2);
+                    gfx.endFill();
+
+                    // 6. Top Lifting Lugs/Bolts
+                    gfx.beginFill(0x555555);
+                    gfx.drawCircle(-w / 2 + 15, -h / 2 + 8 + shiftY, 5);
+                    gfx.drawCircle(w / 2 - 15, -h / 2 + 8 + shiftY, 5);
+                    gfx.endFill();
+
+
+                    // 8. Text Label (Floating above)
+                    // Update label position relative to shifted body
+                    const stencil = new PIXI.Text("HV-01", {
+                        fontFamily: "Arial",
+                        fontSize: 10,
+                        fontWeight: "bold",
+                        fill: "#333333"
+                    });
+                    stencil.anchor.set(0.5);
+                    stencil.position.set(0, -h / 2 - 10 + shiftY);
+                    container.addChild(stencil);
+
+                    // Store reference
+                    this.markers[id] = { box: gfx, text: stencil, color: color };
+
+                } else {
+                    // --- INDUSTRIAL CAGED BULB MARKER ---
+                    // 1. Heavy Metal Base (Hex or Square)
+                    const baseW = 50;
+                    const baseH = 20;
+
+                    const gfx = new PIXI.Graphics();
+                    container.addChild(gfx);
+
+                    // Base Shadow
+                    gfx.beginFill(0x000000, 0.5);
+                    gfx.drawRect(-baseW / 2 + 5, -baseH / 2 + 35, baseW, baseH);
+                    gfx.endFill();
+
+                    // Metal Base Structure
+                    gfx.lineStyle(2, 0x111111);
+                    gfx.beginFill(0x333333); // Dark Steel
+                    gfx.drawPolygon([
+                        -baseW / 2, 10,  // Top Left
+                        baseW / 2, 10,   // Top Right
+                        baseW / 2, 30,   // Bottom Right
+                        -baseW / 2, 30   // Bottom Left
+                    ]);
+                    gfx.endFill();
+
+                    // Bolts on Base
+                    gfx.lineStyle(0);
+                    gfx.beginFill(0x999999);
+                    gfx.drawCircle(-baseW / 2 + 6, 20, 3);
+                    gfx.drawCircle(baseW / 2 - 6, 20, 3);
+                    gfx.endFill();
+
+                    // 2. Glass Dome (The part that lights up)
+                    const glass = new PIXI.Graphics();
+                    container.addChild(glass); // Add glass separately for easy tinting
+
+                    // Glass Shape (Dome)
+                    const domeR = 20;
+                    const domeH = 35;
+
+                    glass.beginFill(0xFFFFFF); // White base for tinting
+                    glass.lineStyle(2, 0x222222, 0.5);
+                    // Draw dome path
+                    glass.moveTo(-domeR, 10);
+                    glass.lineTo(-domeR, 10 - domeH + domeR); // Straight side up
+                    glass.quadraticCurveTo(0, 10 - domeH - 10, domeR, 10 - domeH + domeR); // Top curve
+                    glass.lineTo(domeR, 10);
+                    glass.closePath();
+                    glass.endFill();
+
+                    glass.tint = 0x333333; // Default OFF color (Dark Gray)
+
+                    // 3. Protective Cage (Bars over the glass)
+                    const cage = new PIXI.Graphics();
+                    container.addChild(cage);
+
+                    cage.lineStyle(3, 0x222222); // Thick iron bars
+                    // Vertical bars
+                    cage.moveTo(0, 10); cage.lineTo(0, -25); // Center
+                    cage.moveTo(-12, 10); cage.lineTo(-12, -18); // Left
+                    cage.moveTo(12, 10); cage.lineTo(12, -18); // Right
+
+                    // Horizontal ring at top
+                    cage.lineStyle(3, 0x222222);
+                    // 4. Spotlight Beam Effect (Conical & Fuzzy)
+                    const glow = new PIXI.Graphics();
+                    const beamWidthTop = 40;
+                    const beamWidthBottom = 200; // Wider bottom
+                    const beamHeight = 240;      // Longer beam (hits the floor area)
+
+                    glow.beginFill(0xFFFFFF, 0.5);
+                    glow.drawPolygon([
+                        -beamWidthTop / 2, 25,
+                        beamWidthTop / 2, 25,
+                        beamWidthBottom / 2, 25 + beamHeight,
+                        -beamWidthBottom / 2, 25 + beamHeight
+                    ]);
+                    glow.endFill();
+
+                    // Add blur for "Premium" light feeling
+                    const blurFilter = new PIXI.filters.BlurFilter();
+                    blurFilter.blur = 12;
+                    glow.filters = [blurFilter];
+
+                    glow.visible = false;
+                    glow.alpha = 0;
+                    container.addChildAt(glow, 0);
+
+                    // Label
+                    const text = new PIXI.Text(label, {
+                        fill: '#888',
+                        fontSize: 10,
+                        fontWeight: 'bold',
+                        fontFamily: 'Verdana, sans-serif',
+                        align: 'center'
+                    });
+                    text.anchor.set(0.5);
+                    text.y = 45;
+                    container.addChild(text);
+
+                    // 5. Secret Character (Silhouette)
+                    let secretText = null;
+                    if (secret) {
+                        secretText = new PIXI.Text(secret, {
+                            fill: '#0a0a0a',
+                            fontSize: 72, // Larger secret
+                            fontWeight: '900',
+                            fontFamily: 'Arial Black, Gadget, sans-serif'
+                        });
+                        secretText.anchor.set(0.5);
+                        secretText.y = 120; // Middle of the beam
+                        secretText.alpha = 0;
+
+                        // Add blur to text so it looks "projected" and fuzzy
+                        const textBlur = new PIXI.filters.BlurFilter();
+                        textBlur.blur = 2;
+                        secretText.filters = [textBlur];
+
+                        container.addChild(secretText);
+                    }
+
+                    this.markers[id] = {
+                        box: gfx,
+                        glass: glass,
+                        glow: glow,
+                        text: text,
+                        secretText: secretText,
+                        color: color
+                    };
+                }
+
+                container.x = x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+                container.y = y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+                container.eventMode = 'none';
+                layer.addChild(container);
+            }
+
+            updateMarker(id, isOn, onColor) {
+                const m = this.markers[id];
+                if (!m || id === 'start') return;
+
+                // Industrial Bulb Logic
+                if (m.glass && m.glow) {
+                    // Animate/Transition color
+                    m.glass.tint = isOn ? onColor : 0x333333;
+
+                    // Toggle Glow
+                    m.glow.visible = isOn;
+                    if (isOn) {
+                        m.glow.tint = onColor;
+                        m.glow.alpha = 0.6 + Math.random() * 0.2; // Stronger glow for contrast
+
+                        // Reveal Secret (Silhouette)
+                        if (m.secretText) {
+                            m.secretText.alpha = 1; // Fully visible black text against light
+                        }
+                    } else {
+                        // Hide Secret
+                        if (m.secretText) {
+                            m.secretText.alpha = 0;
+                        }
+                    }
+
+                    // Text highlight
+                    m.text.style.fill = isOn ? '#ffffff' : '#888888';
+                } else if (m.box) {
+                    // Fallback for old markers if any
+                    m.box.tint = isOn ? (onColor || 0x444444) : 0x444444;
+                }
+            }
+
+            checkPath() {
+                for (let y = 0; y < this.rows; y++) {
+                    for (let x = 0; x < this.cols; x++) {
+                        this.pipes[y][x].setEnergized(false, []);
+                    }
+                }
+                const startKey = `${this.startPoint.x},${this.startPoint.y}`;
+                const adj = new Map();
+                for (let y = 0; y < this.rows; y++) {
+                    for (let x = 0; x < this.cols; x++) {
+                        const key = `${x},${y}`;
+                        adj.set(key, []);
+                        const ns = [{ x, y: y - 1, d: 0, r: 2 }, { x: x + 1, y, d: 1, r: 3 }, { x, y: y + 1, d: 2, r: 0 }, { x: x - 1, y, d: 3, r: 1 }];
+                        ns.forEach(n => {
+                            if (n.x >= 0 && n.x < this.cols && n.y >= 0 && n.y < this.rows) {
+                                if (this.pipes[y][x].arms[n.d] && this.pipes[n.y][n.x].arms[n.r]) adj.get(key).push(`${n.x},${n.y}`);
+                            }
+                        });
+                    }
+                }
+
+                const visited = new Set([startKey]), q = [startKey];
+                while (q.length) {
+                    const u = q.shift();
+                    (adj.get(u) || []).forEach(v => { if (!visited.has(v)) { visited.add(v); q.push(v); } });
+                }
+
+                const pipeColors = new Map();
+                this.endPoints.forEach(ep => {
+                    const bulbKey = `${ep.x},${ep.y}`;
+                    if (visited.has(bulbKey)) {
+                        this.updateMarker(`bulb_${ep.id}`, true, ep.color);
+                        const subNodes = new Set([bulbKey]), bq = [bulbKey];
+                        while (bq.length) {
+                            const u = bq.shift();
+                            (adj.get(u) || []).forEach(v => { if (visited.has(v) && !subNodes.has(v)) { subNodes.add(v); bq.push(v); } });
+                        }
+                        const subAdj = new Map();
+                        subNodes.forEach(u => subAdj.set(u, new Set(adj.get(u).filter(v => subNodes.has(v)))));
+                        let changed = true;
+                        while (changed) {
+                            changed = false;
+                            for (const [u, nbs] of subAdj) {
+                                if (u !== startKey && u !== bulbKey && nbs.size <= 1) {
+                                    nbs.forEach(v => subAdj.get(v).delete(u));
+                                    subAdj.delete(u); changed = true;
+                                }
+                            }
+                        }
+                        for (const u of subAdj.keys()) {
+                            if (!pipeColors.has(u)) pipeColors.set(u, new Set());
+                            pipeColors.get(u).add(ep.color);
+                        }
+                    } else {
+                        this.updateMarker(`bulb_${ep.id}`, false);
+                    }
+                });
+
+                for (const [key, colors] of pipeColors) {
+                    const [px, py] = key.split(',').map(Number);
+                    this.pipes[py][px].setEnergized(true, Array.from(colors));
+                }
+            }
+        }
+
+        const init = () => {
+            const app = new PIXI.Application({
+                width: window.innerWidth,
+                height: window.innerHeight,
+                backgroundColor: CONFIG.COLORS.BG,
+                antialias: true,
+                resizeTo: window
+            });
+
+            // Register custom Wrench cursor for PixiJS
+            const wrenchCursor = "url(\"data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3e%3cpath fill='%23aaa' stroke='%23333' stroke-width='1.5' d='M23.1,3.9c-2.4-2.4-6.2-2.4-8.6,0c-1.8,1.8-2.2,4.6-1.1,6.8L3.1,21c-1.4,1.4-1.4,3.7,0,5.1l2.8,2.8c1.4,1.4,3.7,1.4,5.1,0l10.3-10.3c2.2,1.1,5,0.7,6.8-1.1C30.6,15,30.6,11.3,28.2,8.9L23.1,3.9z M25.6,12.7c-0.8,0.8-2,0.8-2.8,0c-0.8-0.8-0.8-2,0-2.8c0.8-0.8,2-0.8,2.8,0C26.3,10.7,26.3,12,25.6,12.7z'/%3e%3c/svg%3e\") 24 8, auto";
+            app.renderer.events.cursorStyles.wrench = wrenchCursor;
+
+            document.getElementById('game-container').appendChild(app.view);
+            const viewport = new PIXI.Container();
+            viewport.eventMode = 'static';
+            app.stage.addChild(viewport);
+            const grid = new Grid(app.screen.width, app.screen.height);
+            viewport.addChild(grid);
+
+            let isDragging = false, dragStart = { x: 0, y: 0 }, dragOffset = { x: 0, y: 0 };
+            app.stage.eventMode = 'static';
+            app.stage.hitArea = app.screen;
+            app.stage.on('pointerdown', (e) => {
+                if (e.target === app.stage || e.target === viewport) {
+                    isDragging = true;
+                    dragStart = { x: e.global.x, y: e.global.y };
+                    dragOffset = { x: viewport.x, y: viewport.y };
+                }
+            });
+            app.stage.on('pointermove', (e) => {
+                if (!isDragging) return;
+                const dx = e.global.x - dragStart.x;
+                const dy = e.global.y - dragStart.y;
+                viewport.x = dragOffset.x + dx;
+                viewport.y = dragOffset.y + dy;
+            });
+            app.stage.on('pointerup', () => { isDragging = false; });
+            app.stage.on('pointerupoutside', () => { isDragging = false; });
+
+            app.view.addEventListener('wheel', (e) => {
+                const s = e.deltaY < 0 ? 1.1 : 0.9;
+                const oldScale = viewport.scale.x;
+                const mouse = app.renderer.events.pointer.global, local = viewport.toLocal(mouse);
+                viewport.scale.set(Math.min(Math.max(oldScale * s, 0.2), 3));
+                viewport.x = mouse.x - local.x * viewport.scale.x;
+                viewport.y = mouse.y - local.y * viewport.scale.y;
+            });
+            window.G_VIEWPORT = viewport;
+        };
+
+        window.onload = init;
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Industrial Circuit Puzzle</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0a0a0a;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #ccc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: #0a0a0a;
+            /* Industrial Grid Background */
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+
+        /* Vignette Effect */
+        #game-container::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, transparent 30%, rgba(0, 0, 0, 0.8) 100%);
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 20;
+            pointer-events: none;
+            /* Critical: UI must not block clicks */
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #d4d4d4;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 600;
+        }
+
+        .status {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+    <!-- PixiJS v7 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
+    <!-- GSAP v3 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+</head>
+
+<body>
+    <div id="game-container"></div>
+    <div id="ui-layer">
+        <h1>CIRCUIT BOARD v2.0</h1>
+        <div class="status">SYSTEM DIAGNOSTIC: READY</div>
+    </div>
+
+    <script>
+        const CONFIG = {
+            GRID_SIZE: 11,
+            TILE_SIZE: 90,
+            PIPE_THICKNESS: 14,
+            ACTIVE_THICKNESS: 6,
+            COLORS: {
+                BG: 0x0a0a0a,
+                PIPE_INACTIVE: 0x333333,
+                PIPE_BORDER: 0x1a1a1a,
+                CONNECTOR: 0x444444,
+                ENERGY_CYAN: 0x00ffff,
+                ENERGY_MAGENTA: 0xff00ff,
+                ENERGY_WHITE: 0xffffff,
+                TRANSFORMER: 0xF2C500, // Industrial Safety Yellow
+                BULB_OFF: 0x222222
+            },
+            ANIMATION_DURATION: 0.3
+        };
+
+        class Pipe extends PIXI.Container {
+            constructor(x, y, type = [0, 0, 0, 0], isFixed = false, specialType = null) {
+                super();
+                this.gridX = x;
+                this.gridY = y;
+                this.isFixed = isFixed;
+                this.specialType = specialType; // 'transformer', 'bulb_left', 'bulb_right'
+                this.arms = [...type]; // [Up, Right, Down, Left] 0 or 1
+                this.isEnergized = false;
+                this.activeColors = []; // Array of active colors
+                this.isInteracting = false;
+
+                this.visuals = new PIXI.Container();
+                this.addChild(this.visuals);
+
+                // Center the pipe in the tile
+                this.x = x * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+                this.y = y * CONFIG.TILE_SIZE + CONFIG.TILE_SIZE / 2;
+
+                // Explicit Hit Area for 100% Click Reliability
+                this.eventMode = isFixed ? 'static' : 'static'; // Fixed items still block drag if needed, or see below
+                // If it's a fixed pipe (like start/end), it shouldn't rotate, but might still be clickable to show info? 
+                // User asked for "Connect" logic. For now, we just disable rotation for fixed.
+                // We set hitArea to full tile to capture all clicks easily.
+                this.hitArea = new PIXI.Rectangle(-CONFIG.TILE_SIZE / 2, -CONFIG.TILE_SIZE / 2, CONFIG.TILE_SIZE, CONFIG.TILE_SIZE);
+                this.cursor = isFixed ? 'default' : 'pointer';
+
+                this.on('pointerdown', this.onClick.bind(this));
+
+                this.draw();
+            }
+
+            draw() {
+                this.visuals.removeChildren();
+
+                // --- 0. Special Background (Transformer/Bulb Housing) ---
+                if (this.specialType) {
+                    const bgSize = 70;
+                    const bg = new PIXI.Graphics();
+
+                    if (this.specialType === 'transformer') {
+                        // Industrial Yellow Box
+                        bg.lineStyle(2, 0x000000);
+                        bg.beginFill(CONFIG.COLORS.TRANSFORMER);
+                        bg.drawRoundedRect(-bgSize / 2, -bgSize / 2, bgSize, bgSize, 6);
+                        bg.endFill();
+
+                        // Hazard Stripes (Vector Pattern)
+                        const mask = new PIXI.Graphics();
+                        mask.beginFill(0xffffff);
+                        mask.drawRoundedRect(-bgSize / 2, -bgSize / 2, bgSize, bgSize, 6);
+                        mask.endFill();
+                        bg.addChild(mask);
+
+                        const stripes = new PIXI.Graphics();
+                        stripes.beginFill(0x000000, 0.2);
+                        for (let i = -bgSize; i < bgSize; i += 15) {
+                            stripes.drawPolygon([
+                                i, -bgSize / 2,
+                                i + 8, -bgSize / 2,
+                                i + 8 - bgSize, bgSize / 2,
+                                i - bgSize, bgSize / 2
+                            ]);
+                        }
+                        stripes.endFill();
+                        stripes.mask = mask;
+                        bg.addChild(stripes);
+
+                        // Bolt Icon
+                        const bolt = new PIXI.Text("⚡", {
+                            fontFamily: "Arial",
+                            fontSize: 36,
+                            fontWeight: "bold",
+                            fill: "#1a1a1a"
+                        });
+                        bolt.anchor.set(0.5);
+                        bg.addChild(bolt);
+
+                    } else if (this.specialType.startsWith('bulb')) {
+                        // Bulb Housing
+                        bg.lineStyle(2, 0x444444);
+                        bg.beginFill(CONFIG.COLORS.BULB_OFF);
+                        bg.drawCircle(0, 0, 30);
+                        bg.endFill();
+
+                        // If active, draw Glow
+                        const myColor = this.specialType === 'bulb_left' ? CONFIG.COLORS.ENERGY_MAGENTA : CONFIG.COLORS.ENERGY_CYAN;
+                        const isMyColorActive = this.activeColors.includes(myColor) || this.activeColors.includes(CONFIG.COLORS.ENERGY_WHITE);
+
+                        if (isMyColorActive) {
+                            bg.beginFill(myColor);
+                            bg.drawCircle(0, 0, 24);
+                            bg.endFill();
+                            // Outer Glow
+                            bg.lineStyle(4, myColor, 0.3);
+                            bg.drawCircle(0, 0, 34);
+                        }
+                    }
+                    this.visuals.addChild(bg);
+
+                    // IF it's a special tile, we might NOT want to draw standard pipes on top if they look weird?
+                    // Actually, for the start point, the pipe comes OUT of it. 
+                    // Let's draw pipes on top for standard visibility.
+                }
+
+                // --- 1. Pipes ---
+                const g = new PIXI.Graphics();
+                this.visuals.addChild(g);
+
+                const armLen = CONFIG.TILE_SIZE / 2;
+                const thick = CONFIG.PIPE_THICKNESS;
+
+                // Directions: 0:Up, 1:Right, 2:Down, 3:Left
+                // Standard Pipe Color
+                g.lineStyle(thick, CONFIG.COLORS.PIPE_INACTIVE);
+
+                // Draw Inactive Pipes & Connectors
+                for (let i = 0; i < 4; i++) {
+                    if (this.arms[i]) {
+                        // Line
+                        g.lineStyle(thick, CONFIG.COLORS.PIPE_INACTIVE);
+                        // Draw from center to edge
+                        if (i === 0) { g.moveTo(0, 0); g.lineTo(0, -armLen); }
+                        if (i === 1) { g.moveTo(0, 0); g.lineTo(armLen, 0); }
+                        if (i === 2) { g.moveTo(0, 0); g.lineTo(0, armLen); }
+                        if (i === 3) { g.moveTo(0, 0); g.lineTo(-armLen, 0); }
+
+                        // Connector Dot at Edge
+                        g.beginFill(CONFIG.COLORS.CONNECTOR);
+                        g.lineStyle(0); // No border for dot
+                        if (i === 0) g.drawCircle(0, -armLen + 5, 6);
+                        if (i === 1) g.drawCircle(armLen - 5, 0, 6);
+                        if (i === 2) g.drawCircle(0, armLen - 5, 6);
+                        if (i === 3) g.drawCircle(-armLen + 5, 0, 6);
+                        g.endFill();
+                    }
+                }
+
+                // Central Node
+                if (this.arms.some(x => x)) {
+                    g.beginFill(CONFIG.COLORS.CONNECTOR);
+                    g.drawCircle(0, 0, thick / 1.5);
+                    g.endFill();
+                }
+
+                // --- 2. Active Energy (Glow) ---
+                if (this.isEnergized && this.activeColors.length > 0) {
+                    const energyG = new PIXI.Graphics();
+                    this.visuals.addChild(energyG);
+
+                    // Determine Color
+                    let useColor = this.activeColors[0];
+                    if (this.activeColors.length > 1) useColor = CONFIG.COLORS.ENERGY_WHITE; // Overlap
+
+                    energyG.lineStyle(CONFIG.ACTIVE_THICKNESS, useColor);
+
+                    for (let i = 0; i < 4; i++) {
+                        if (this.arms[i]) {
+                            if (i === 0) { energyG.moveTo(0, 0); energyG.lineTo(0, -armLen); }
+                            if (i === 1) { energyG.moveTo(0, 0); energyG.lineTo(armLen, 0); }
+                            if (i === 2) { energyG.moveTo(0, 0); energyG.lineTo(0, armLen); }
+                            if (i === 3) { energyG.moveTo(0, 0); energyG.lineTo(-armLen, 0); }
+                        }
+                    }
+                    // Central Glow
+                    energyG.beginFill(useColor);
+                    energyG.drawCircle(0, 0, 4);
+                    energyG.endFill();
+
+                    // Add Filter/Blend if needed, but simple vector style usually looks best sharp or with slight blur
+                    energyG.filters = [new PIXI.BlurFilter(1)];
+                }
+            }
+
+            rotate90() {
+                // Prevent rotation for fixed tiles or if currently animating
+                if (this.isFixed || this.isInteracting) return;
+
+                this.isInteracting = true;
+
+                // Logic Rotation
+                const last = this.arms.pop();
+                this.arms.unshift(last);
+
+                // Visual Rotation (Animation)
+                const targetRotation = this.visuals.rotation + (Math.PI / 2);
+
+                gsap.to(this.visuals, {
+                    rotation: targetRotation,
+                    duration: CONFIG.ANIMATION_DURATION,
+                    ease: "back.out(1.7)", // Nice mechanical snap
+                    onComplete: () => {
+                        this.isInteracting = false;
+                        // Normalize visuals to 0 and rotate logic (or just keep spinning)
+                        // Actually easier to keep spinning visuals.
+                        // IMPORTANT: We need to notify Grid to re-check paths
+                        if (this.parent && this.parent.parent) { // visuals -> pipe -> grid
+                            // Actually pipe is added to Grid directly in previous code?
+                            // Let's check Grid structure. Grid adds Pipe.
+                            this.parent.emit('pipeRotated');
+                        }
+                    }
+                });
+            }
+
+            onClick(e) {
+                // Interaction Guard: Panic if dragging
+                if (window.G_VIEWPORT && window.G_VIEWPORT.isPanning) return;
+                this.rotate90();
+            }
+
+            setEnergized(state, colors = []) {
+                // Check if unchanged to avoid redraws
+                // Simple array equality check
+                const sameColors = (this.activeColors.length === colors.length) &&
+                    this.activeColors.every((val, index) => val === colors[index]);
+
+                if (this.isEnergized === state && sameColors) return;
+
+                this.isEnergized = state;
+                this.activeColors = [...colors]; // Copy
+                this.draw();
+            }
+        }
+
+        class Grid extends PIXI.Container {
+            constructor(appWidth, appHeight) {
+                super();
+                this.cols = CONFIG.GRID_SIZE;
+                this.rows = CONFIG.GRID_SIZE;
+                this.pipes = [];
+
+                // Centering Logic
+                const gridW = this.cols * CONFIG.TILE_SIZE;
+                const gridH = this.rows * CONFIG.TILE_SIZE;
+                this.x = (appWidth - gridW) / 2;
+                this.y = (appHeight - gridH) / 2;
+
+                // Define Special Points
+                this.transformer = { x: 5, y: 0 }; // Top Center
+                this.bulbLeft = { x: 0, y: 10 };    // Bottom Left
+                this.bulbRight = { x: 10, y: 10 };  // Bottom Right
+
+                this.initGrid();
+
+                // Listen for updates
+                this.on('pipeRotated', () => {
+                    this.checkPath();
+                });
+            }
+
+            generateRandomPath(start, end) {
+                // Simple Random Walker with bias
+                let curr = { ...start };
+                const path = [];
+                path.push({ x: curr.x, y: curr.y });
+
+                let limit = 0;
+                while ((curr.x !== end.x || curr.y !== end.y) && limit < 100) {
+                    limit++;
+                    const moves = [];
+                    if (curr.x < end.x) moves.push({ x: curr.x + 1, y: curr.y });
+                    if (curr.x > end.x) moves.push({ x: curr.x - 1, y: curr.y });
+                    if (curr.y < end.y) moves.push({ x: curr.x, y: curr.y + 1 });
+                    if (curr.y > end.y) moves.push({ x: curr.x, y: curr.y - 1 });
+
+                    // Add random noise
+                    if (Math.random() < 0.3) moves.push({ x: curr.x + (Math.random() > 0.5 ? 1 : -1), y: curr.y });
+
+                    // Filter valid
+                    const validMoves = moves.filter(m =>
+                        m.x >= 0 && m.x < this.cols &&
+                        m.y >= 0 && m.y < this.rows &&
+                        !path.some(p => p.x === m.x && p.y === m.y) // No immediate backtrack
+                    );
+
+                    if (validMoves.length > 0) {
+                        curr = validMoves[Math.floor(Math.random() * validMoves.length)];
+                        path.push({ x: curr.x, y: curr.y });
+                    } else {
+                        break; // Stuck
+                    }
+                }
+                return path;
+            }
+
+            initGrid() {
+                // 1. Generate guaranteed paths
+                const pathLeft = this.generateRandomPath(this.transformer, this.bulbLeft);
+                const pathRight = this.generateRandomPath(this.transformer, this.bulbRight);
+
+                // Map paths to a lookup strings "x,y" = true
+                const solutionTiles = new Set();
+                pathLeft.forEach(p => solutionTiles.add(`${p.x},${p.y}`));
+                pathRight.forEach(p => solutionTiles.add(`${p.x},${p.y}`));
+
+                for (let y = 0; y < this.rows; y++) {
+                    this.pipes[y] = [];
+                    for (let x = 0; x < this.cols; x++) {
+                        let specialType = null;
+                        let isFixed = false;
+
+                        if (x === this.transformer.x && y === this.transformer.y) {
+                            specialType = 'transformer';
+                            isFixed = true;
+                        } else if (x === this.bulbLeft.x && y === this.bulbLeft.y) {
+                            specialType = 'bulb_left';
+                            isFixed = true;
+                        } else if (x === this.bulbRight.x && y === this.bulbRight.y) {
+                            specialType = 'bulb_right';
+                            isFixed = true;
+                        }
+
+                        // Determine Configuration
+                        // If it's on the solution path, we ensure it *can* connect properly, 
+                        // but we random rotation it so user has to solve it.
+                        // For MVP, lets just stick to the previous logic of initializing validish pipes
+
+                        let arms = [0, 0, 0, 0];
+
+                        // For simplicity in this recovery:
+                        // Random pipes everywhere.
+                        // Bias towards "Straight" and "L-shape" and "T-shape"
+                        const types = [
+                            [1, 0, 1, 0], // I
+                            [0, 1, 0, 1], // -
+                            [1, 1, 0, 0], // L
+                            [0, 1, 1, 0],
+                            [0, 0, 1, 1],
+                            [1, 0, 0, 1],
+                            [1, 1, 1, 0], // T
+                            [1, 1, 0, 1],
+                            [1, 0, 1, 1],
+                            [0, 1, 1, 1],
+                            [1, 1, 1, 1]  // + (Rare)
+                        ];
+
+                        // If Start/End, force connections towards center
+                        if (specialType === 'transformer') arms = [0, 0, 1, 0]; // Down only
+                        else if (specialType) arms = [1, 1, 1, 1]; // Bulbs connect all
+                        else {
+                            arms = types[Math.floor(Math.random() * types.length)];
+                        }
+
+                        const pipe = new Pipe(x, y, arms, isFixed, specialType);
+                        this.addChild(pipe);
+                        this.pipes[y][x] = pipe;
+
+                        // Random rotate non-fixed
+                        if (!isFixed) {
+                            const r = Math.floor(Math.random() * 4);
+                            for (let i = 0; i < r; i++) {
+                                pipe.arms.unshift(pipe.arms.pop());
+                                pipe.visuals.rotation += Math.PI / 2;
+                            }
+                        }
+                    }
+                }
+
+                this.checkPath();
+            }
+
+            checkPath() {
+                // Reset all
+                for (let y = 0; y < this.rows; y++) {
+                    for (let x = 0; x < this.cols; x++) {
+                        this.pipes[y][x].setEnergized(false, []);
+                    }
+                }
+
+                // BFS for Left Bulb (Magenta)
+                const magentaPath = this.trace(CONFIG.COLORS.ENERGY_MAGENTA);
+                // BFS for Right Bulb (Cyan)
+                const cyanPath = this.trace(CONFIG.COLORS.ENERGY_CYAN);
+
+                // Apply Colors
+                // We use a map to accumulate colors per tile
+                const tileColors = new Map(); // "x,y" -> Set of colors
+
+                const addToMap = (path, color) => {
+                    path.forEach(pos => {
+                        const key = `${pos.x},${pos.y}`;
+                        if (!tileColors.has(key)) tileColors.set(key, new Set());
+                        tileColors.get(key).add(color);
+                    });
+                };
+
+                // TRICKY PART: We only light up if connected to TRANSFORMER.
+                // trace() starts from transformer?
+                // Actually my trace function below should start from Transformer and find ALL reachable.
+                // Then filter if they reach the specific bulb?
+
+                // Let's do: Start from Transformer. Flood Fill.
+                // If the flood reaches Bulb Left -> Mark that *entire path* (backtrace?) as Magenta?
+                // No, electricity flows everywhere connected.
+                // If the Transformer is connected to a dead end, does it light up? Usually yes in games like this.
+                // BUT user said "Only complete circuits". -> "연결 시켜도 빛이 안남" complaining.
+                // Standard logic: Light up everything connected to Source.
+                // Color logic: 
+                //    - Source has "Power".
+                //    - If path hits Left Bulb -> That PATH is Magenta?
+                //    - If path hits Right Bulb -> That PATH is Cyan?
+                //    - If path hits both/shared -> White?
+                // User requirement: "Bulb connection defines color". 
+                // This implies reverse-search or solving. 
+
+                // Let's try:
+                // 1. Find all tiles connected to Transformer.
+                // 2. Check if this connected set includes Bulb Left.
+                // 3. Check if this connected set includes Bulb Right.
+                // 4. Color accordingly.
+
+                const connectedSet = this.getConnectedSet(this.transformer);
+                const hitsLeft = connectedSet.has(`${this.bulbLeft.x},${this.bulbLeft.y}`);
+                const hitsRight = connectedSet.has(`${this.bulbRight.x},${this.bulbRight.y}`);
+
+                // If hits Left, paint Magenta?
+                // Wait, if I have a fork, one goes to Left Bulb, one goes nowhere. 
+                // Does the dead end glow Magenta too? 
+                // "Prevent any wiring ... in top row ... except transformer".
+                // "Refined Logic" from history: "Ensure only complete circuits ... are galvanized".
+                // OK, so Pruning dead ends.
+
+                // REVISED ALGORITHM:
+                // 1. Breadth-First Search from Transformer to find all reachables.
+                // 2. Determine which bulbs are reached.
+                // 3. If Left is reached -> Backtrace/Find path to Left -> Color Magenta.
+                // 4. If Right is reached -> Backtrace/Find path to Right -> Color Cyan.
+                // 5. Merge Colors.
+
+                // Note: There might be multiple paths to a bulb. We should light up all valid paths.
+
+                if (hitsLeft) {
+                    const validTiles = this.pruneDeadEnds(this.transformer, this.bulbLeft);
+                    addToMap(validTiles, CONFIG.COLORS.ENERGY_MAGENTA);
+                }
+                if (hitsRight) {
+                    const validTiles = this.pruneDeadEnds(this.transformer, this.bulbRight);
+                    addToMap(validTiles, CONFIG.COLORS.ENERGY_CYAN);
+                }
+
+                // Apply to Pipes
+                tileColors.forEach((colors, key) => {
+                    const [x, y] = key.split(',').map(Number);
+                    this.pipes[y][x].setEnergized(true, Array.from(colors));
+                });
+            }
+
+            getConnectedSet(start) {
+                const visited = new Set();
+                const queue = [start];
+                visited.add(`${start.x},${start.y}`);
+
+                while (queue.length > 0) {
+                    const curr = queue.shift();
+                    const neighbors = this.getNeighbors(curr.x, curr.y);
+                    neighbors.forEach(n => {
+                        const key = `${n.x},${n.y}`;
+                        if (!visited.has(key)) {
+                            visited.add(key);
+                            queue.push(n);
+                        }
+                    });
+                }
+                return visited;
+            }
+
+            // Returns list of {x,y} that are part of a path from Start to End
+            pruneDeadEnds(start, end) {
+                // Forward BFS to get parents
+                const queue = [start];
+                const visited = new Map(); // key -> list of parents (allows multiple paths)
+                visited.set(`${start.x},${start.y}`, []);
+
+                let found = false;
+
+                // Standard BFS to build graph of reachable nodes
+                // We need a slightly different approach: Get all connected nodes first (subgraph).
+                // Then prune nodes that can't reach 'end'.
+
+                const connectedNodes = []; // All nodes in the connected component
+                const nodeMap = new Map(); // key -> {x,y, neighbors}
+
+                // 1. Build Connected Graph starting from Source
+                const q = [start];
+                const seen = new Set([`${start.x},${start.y}`]);
+
+                while (q.length) {
+                    const curr = q.shift();
+                    connectedNodes.push(curr);
+                    const others = this.getNeighbors(curr.x, curr.y);
+                    others.forEach(n => {
+                        const key = `${n.x},${n.y}`;
+                        if (!seen.has(key)) {
+                            seen.add(key);
+                            q.push(n);
+                        }
+                    });
+                }
+
+                // 2. Reverse Pruning: remove nodes that cannot reach 'end'
+                // Actually easier: Reverse BFS from 'end' strictly within the 'connectedNodes' set.
+                // If we can reach it going backwards along the links, then it's on a valid path.
+
+                const validPathSet = new Set();
+                // Check if end is reachable at all
+                if (!seen.has(`${end.x},${end.y}`)) return []; // Not connected
+
+                const revQ = [end];
+                validPathSet.add(`${end.x},${end.y}`);
+
+                while (revQ.length) {
+                    const curr = revQ.shift();
+
+                    // Who connects to me? (Undirected graph, so same neighbors)
+                    // But we must strictly look only at nodes in 'seen'
+                    const neighbors = this.getNeighbors(curr.x, curr.y);
+                    neighbors.forEach(n => {
+                        const key = `${n.x},${n.y}`;
+                        if (seen.has(key) && !validPathSet.has(key)) {
+                            validPathSet.add(key);
+                            revQ.push(n);
+                        }
+                    });
+                }
+
+                // Convert Set back to coordinates
+                const result = [];
+                validPathSet.forEach(k => {
+                    const [x, y] = k.split(',').map(Number);
+                    result.push({ x, y });
+                });
+                return result;
+            }
+
+            getNeighbors(x, y) {
+                const params = [
+                    { dx: 0, dy: -1, armIdx: 0, oppIdx: 2 }, // Up
+                    { dx: 1, dy: 0, armIdx: 1, oppIdx: 3 },  // Right
+                    { dx: 0, dy: 1, armIdx: 2, oppIdx: 0 },  // Down
+                    { dx: -1, dy: 0, armIdx: 3, oppIdx: 1 }  // Left
+                ];
+
+                const currPipe = this.pipes[y][x];
+                const res = [];
+
+                params.forEach(p => {
+                    const nx = x + p.dx;
+                    const ny = y + p.dy;
+
+                    if (nx >= 0 && nx < this.cols && ny >= 0 && ny < this.rows) {
+                        const neighborPipe = this.pipes[ny][nx];
+                        // Check connection: My arm points there AND their arm points here
+                        if (currPipe.arms[p.armIdx] === 1 && neighborPipe.arms[p.oppIdx] === 1) {
+                            res.push({ x: nx, y: ny });
+                        }
+                    }
+                });
+                return res;
+            }
+
+            trace(color) {
+                // Placeholder, logic moved to checkPath directly
+                return [];
+            }
+        }
+
+        const init = () => {
+            // PixiJS Application
+            const app = new PIXI.Application({
+                width: window.innerWidth,
+                height: window.innerHeight,
+                backgroundColor: CONFIG.COLORS.BG,
+                antialias: true,
+                resolution: window.devicePixelRatio || 1,
+                resizeTo: window
+            });
+
+            document.getElementById('game-container').appendChild(app.view);
+
+            // Container for Viewport (Panning/Zooming)
+            const viewport = new PIXI.Container();
+            // Default center
+            viewport.x = app.screen.width / 2;
+            viewport.y = app.screen.height / 2;
+            // Center pivot? No, Grid handles centering. 
+            // Just let viewport be at 0,0 initially, or center it.
+            // Let's stick to Grid centering itself relative to 0,0 and Viewport moving.
+
+            app.stage.addChild(viewport);
+
+            // Grid
+            const grid = new Grid(app.screen.width, app.screen.height);
+            // Grid calculates its own x,y to center on screen.
+            // But if we put it in viewport, we want viewport to be centered.
+            grid.x = - (grid.cols * CONFIG.TILE_SIZE) / 2;
+            grid.y = - (grid.rows * CONFIG.TILE_SIZE) / 2;
+
+            viewport.addChild(grid);
+            viewport.position.set(app.screen.width / 2, app.screen.height / 2);
+
+            // Interactions (Panning/Zooming)
+            // We use global listeners for drag to avoid Tile conflict
+            let isDragging = false;
+            let startPos = { x: 0, y: 0 };
+            let startView = { x: 0, y: 0 };
+
+            app.view.addEventListener('pointerdown', (e) => {
+                // Check if we clicked on a pipe?
+                // Pixi handles the click propagation. If a pipe handles it, good.
+                // But we want to drag background.
+                // We can check e.target in DOM? No, canvas is one element.
+                // We rely on Pixi hit testing. 
+                // Simple hack: We set a flag "isPanning" true on Drag Start, 
+                // but we only ACTUALLY move if we moved more than X pixels (Threshold).
+                // Pipe click checks "isPanning".
+
+                isDragging = true;
+                startPos = { x: e.clientX, y: e.clientY };
+                startView = { x: viewport.x, y: viewport.y };
+                window.G_VIEWPORT = viewport;
+                viewport.isPanning = false; // Reset
+            });
+
+            app.view.addEventListener('pointermove', (e) => {
+                if (!isDragging) return;
+
+                const dx = e.clientX - startPos.x;
+                const dy = e.clientY - startPos.y;
+
+                // Threshold check
+                if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                    viewport.isPanning = true;
+                }
+
+                if (viewport.isPanning) {
+                    viewport.x = startView.x + dx;
+                    viewport.y = startView.y + dy;
+                }
+            });
+
+            const endDrag = () => {
+                isDragging = false;
+                // Defer panning reset slightly to prevent click-trigger on mouseup
+                setTimeout(() => {
+                    if (viewport) viewport.isPanning = false;
+                }, 50);
+            };
+
+            app.view.addEventListener('pointerup', endDrag);
+            app.view.addEventListener('pointerleave', endDrag);
+
+            // Zoom
+            app.view.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const scaleSpeed = 0.001;
+                const newScale = viewport.scale.x - e.deltaY * scaleSpeed;
+
+                // Clamp
+                const s = Math.min(Math.max(newScale, 0.5), 3.0);
+                viewport.scale.set(s);
+            });
+        };
+
+        window.onload = init;
+    </script>
+</body>
+
+</html>
